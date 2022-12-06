@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use wasmer::{TypedFunction, Store, Instance, MemoryType, Pages, WasmPtr, imports, Memory, Function, Module, FunctionEnv, MemoryView, FunctionEnvMut};
 
-use crate::{W4Process, w4, fb::Framebuffer};
+use crate::{W4Process, w4};
 
 pub (crate) mod fb;
 
@@ -15,7 +15,6 @@ pub struct WasmerW4Process {
 
 pub (crate) struct WasmerW4State {
     mem: Memory,
-    fb: Framebuffer,
     store: Store,
 }
 
@@ -29,10 +28,9 @@ impl WasmerW4Process {
         let w4memory_type = MemoryType{minimum:Pages(1), maximum:Some(Pages(1)), shared:false};
         let mem = Memory::new(&mut store, w4memory_type).unwrap();
 
-        let fb = Framebuffer {};
-        let state = Arc::new(Mutex::new(WasmerW4State {mem: mem.clone(), fb, store}));
+        let state = Arc::new(Mutex::new(WasmerW4State {mem: mem.clone(), store}));
 
-        let mut store = &mut state.lock().unwrap().store;
+        let store = &mut state.lock().unwrap().store;
         let fenv = FunctionEnv::new(store, state.clone());
         let imports = imports!{
             "env" => {
