@@ -2,7 +2,7 @@
 
 use std::ops::{Range};
 
-use wasmer::{FunctionEnvMut, WasmPtr, WasmSlice, ValueType};
+use wasmer::{FunctionEnvMut, WasmPtr, WasmSlice, ValueType, AsStoreRef};
 
 use crate::{w4::{SCREEN_SIZE, BLIT_2BPP, FRAMEBUFFER_ADDR}, fb::{Source, Sink}};
 
@@ -35,8 +35,9 @@ impl <'a,T> Sink<T> for WasmSliceSinkSource<'a, T>
 where T: ValueType + Copy
 {
     fn set_item_at(&mut self, offset: usize, item: T) {
-       self.slice.index(offset as u64).write(item).expect("writing to wasm memory failed");
-    }
+//       self.slice.index(offset as u64).write(item).expect("writing to wasm memory failed");
+self.slice.index(0).write(item).expect("writing to wasm memory failed");
+}
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -52,8 +53,7 @@ pub (crate) fn blit_sub(
     stride: u32,
     flags: u32,
 ) {
-    let st = env.data_mut().lock().unwrap();
-    let view = st.mem.view(&st.store);
+    let view = env.data().mem.view(&env.as_store_ref());
     let num_bits = stride * (height + src_y) * crate::fb::pixel_width_of_flags(flags);
     let len = (num_bits + 7) / 8;
     let sprite_slice = sprite.slice(&view, len).unwrap();

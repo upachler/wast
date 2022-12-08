@@ -2,9 +2,12 @@ extern crate sdl2;
 
 
 use rt::bridge::WasmerW4Process;
-use sdl2::pixels::Color;
+use sdl2::pixels::{Color, PixelFormatEnum, Palette};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use sdl2::rect::Rect;
+use sdl2::render::TextureAccess;
+use sdl2::surface::Surface;
 
 use std::{time::Duration};
 
@@ -18,6 +21,9 @@ mod w4;
 trait W4Process  {
     fn start(&mut self);
     fn update(&mut self);
+    fn read_raw_palette(&self, buf: &mut [u8; 3*4]);
+    fn write_raw_palette(&self, buf: &[u8; 3*4]);
+    fn read_fb(&self, buf: &mut [u8]);
 }
 
 
@@ -54,30 +60,61 @@ fn read_wasm_from_url(url: &Url) -> Vec<u8> {
 
 fn run_gameloop<C: W4Process>(cart: &mut C) {
 
+    // initialize default palette
+    cart.write_raw_palette(&[
+        224, 248, 207,
+        134, 192, 108,
+        48, 104, 80,
+        7, 24, 33
+    ]);
+
     cart.start();
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
  
-    let window = video_subsystem.window("WASM Station", 640, 640)
+    let window = video_subsystem.window("WASM Station", 480, 480)
         .position_centered()
         .build()
         .unwrap();
  
     let mut canvas = window.into_canvas().build().unwrap();
  
+    let mut surface = Surface::new(160, 160, PixelFormatEnum::Index8).unwrap();
+    let tc = canvas.texture_creator();
+
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
     canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
     let mut i = 0;
+
+    let mut raw_colors = [0xffu8;3*4];
+    let mut colors = Vec::with_capacity(256);
+    colors.resize(256, Color::RGB(0,0,0));
+
     'running: loop {
 
         cart.update();
 
+        // read palette for this frame
+        for c in 0..4 {
+            colors[c] = Color::RGB(raw_colors[3*c+0], raw_colors[3*c+1], raw_colors[3*c+2])
+        }
+        cart.read_raw_palette(&mut raw_colors);
+
+        cart.read_fb(surface.without_lock_mut().unwrap());
+
+        let palette = Palette::with_colors(&colors).unwrap();
+        surface.set_palette(&palette).unwrap();
+        
         i = (i + 1) % 255;
         canvas.set_draw_color(Color::RGB(i, 64, 255 - i));
         canvas.clear();
+
+        let fb_tex = tc.create_texture_from_surface(&surface).unwrap();
+        canvas.copy(&fb_tex, None, Some(Rect::new(0, 0, 240, 240))).unwrap();
+
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit {..} |
