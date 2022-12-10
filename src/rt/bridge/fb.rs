@@ -1,10 +1,10 @@
 // Brige functionality for exposing host framebuffer functionality to carts
 
-use std::ops::{Range};
+use std::{ops::{Range}, mem::MaybeUninit};
 
 use wasmer::{FunctionEnvMut, WasmPtr, WasmSlice, ValueType, AsStoreRef};
 
-use crate::{w4::{SCREEN_SIZE, BLIT_2BPP, FRAMEBUFFER_ADDR}, fb::{Source, Sink}};
+use crate::{w4::{SCREEN_SIZE, BLIT_2BPP, FRAMEBUFFER_ADDR, DRAW_COLORS_ADDR}, fb::{Source, Sink}};
 
 use super::WasmerW4StateRef;
 
@@ -35,8 +35,7 @@ impl <'a,T> Sink<T> for WasmSliceSinkSource<'a, T>
 where T: ValueType + Copy
 {
     fn set_item_at(&mut self, offset: usize, item: T) {
-//       self.slice.index(offset as u64).write(item).expect("writing to wasm memory failed");
-self.slice.index(0).write(item).expect("writing to wasm memory failed");
+       self.slice.index(offset as u64).write(item).expect("writing to wasm memory failed");
 }
 }
 
@@ -60,11 +59,17 @@ pub (crate) fn blit_sub(
 
     let fb_len = (SCREEN_SIZE * SCREEN_SIZE / 4) as u32;
     let fb_slice = WasmPtr::<u8>::new(FRAMEBUFFER_ADDR as u32).slice(&view, fb_len).unwrap();
+    
+    let draw_colors: u16 = {
+        let mut buf = [0u8;2];
+        view.read(DRAW_COLORS_ADDR as u64, &mut buf).unwrap();
+        buf[0] as u16 | ((buf[1] as u16) << 8)
+    };
 
     let src = WasmSliceSinkSource {slice: sprite_slice};
     let mut tgt = WasmSliceSinkSource {slice: fb_slice};
 
-    crate::fb::blit_sub_impl(&mut tgt, &src, x, y, width, height, src_x, src_y, stride, flags);
+    crate::fb::blit_sub_impl(&mut tgt, &src, x, y, width, height, src_x, src_y, stride, flags, draw_colors);
 }
 
 

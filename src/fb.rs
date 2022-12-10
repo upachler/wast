@@ -76,7 +76,9 @@ pub(crate) fn blit_sub_impl<S,T>(
     src_x: u32,
     src_y: u32,
     stride: u32,
-    flags: u32) 
+    flags: u32,
+    draw_colors: u16
+    ) 
     where 
         S: Source<u8>,
         T: Source<u8> + Sink<u8>
@@ -123,6 +125,7 @@ pub(crate) fn blit_sub_impl<S,T>(
     // if we're starting to write in the middle of a frame
     // buffer byte.
     let mut pixbuf = 0u32;
+    let mut maskbuf = 0u32;
     let mut pixbuf_len = ((tx as i32 & 0x3) - (sx_r.start as i32 & 0x3)) << (pixel_width-1);
 
     let mut tgt_start_idx = (tx + ty*SCREEN_SIZE)>>2;
@@ -142,8 +145,8 @@ pub(crate) fn blit_sub_impl<S,T>(
                 let sprite_byte = sprite.item_at(sprite_idx);
                 sprite_idx += 1;
 
-                let mut sprite_word;
-                let sprite_byte_pixel_capacity;
+                let sprite_word;
+                let sprite_byte_pixel_capacity: u32;
                 if flags & BLIT_2BPP == 0 {
                     sprite_word = conv_1bpp_to_2bpp(sprite_byte);
                     sprite_byte_pixel_capacity = 8;
@@ -152,7 +155,10 @@ pub(crate) fn blit_sub_impl<S,T>(
                     sprite_byte_pixel_capacity = 4;
                 }
 
+                // remap colors via draw_colors
                 let sprite_pixels;
+                let (mut sprite_word, mask_word) = remap_draw_colors(sprite_word, sprite_byte_pixel_capacity, draw_colors);
+
                 if sprite_pixels_left < sprite_byte_pixel_capacity {
                     // if we're reading the right fringe of a sprite line,
                     // mask the excess bits away
@@ -165,17 +171,20 @@ pub(crate) fn blit_sub_impl<S,T>(
                 let bits = sprite_pixels << 1;
 
                 pixbuf = pixbuf | (sprite_word << pixbuf_len);
+                maskbuf = maskbuf | (mask_word << pixbuf_len);
                 pixbuf_len += bits as i32;
             }
 
             // load source byte from pixbuf
             let src_byte = pixbuf as u8;
+            let mask_byte = maskbuf as u8;
             pixbuf >>= 8;
+            maskbuf >>= 8;
             pixbuf_len -= 8;
 
             // apply src_byte to target byte in frame buffer
             let mut tgt_byte = target.item_at(n as usize);
-            tgt_byte &= mk_mask(src_byte);
+            tgt_byte &= mask_byte;
             tgt_byte |= src_byte;
             target.set_item_at(n as usize, tgt_byte)
         }
@@ -190,11 +199,13 @@ pub(crate) fn blit_sub_impl<S,T>(
 #[test]
 fn test_blit_sub_impl_1byte() {
 
+    let draw_colors = 0x4320;
+
     // regular
     let sprite = vec![0b00001111u8];
     let mut fb = vec![0u8;2];
 
-    blit_sub_impl(&mut fb, &sprite, 0, 0, 8, 1, 0, 0, 8, 0);
+    blit_sub_impl(&mut fb, &sprite, 0, 0, 8, 1, 0, 0, 8, 0, draw_colors);
 
     assert_eq!(fb, vec![0b01010101, 0b00000000]);
 
@@ -202,7 +213,7 @@ fn test_blit_sub_impl_1byte() {
     let sprite = vec![0b00001110u8];
     let mut fb = vec![0b11111111, 0b00101000];
 
-    blit_sub_impl(&mut fb, &sprite, 0, 0, 8, 1, 0, 0, 8, 0);
+    blit_sub_impl(&mut fb, &sprite, 0, 0, 8, 1, 0, 0, 8, 0, draw_colors);
 
     assert_eq!(fb, vec![0b01010111, 0b00101000])
 }
@@ -210,29 +221,13 @@ fn test_blit_sub_impl_1byte() {
 #[test]
 fn test_blit_sub_impl_1byte_misaligned() {
 
+    let draw_colors = 0x4320;
     let sprite = vec![0b1111_1111u8];
     let mut fb = vec![0u8;2];
 
-    blit_sub_impl(&mut fb, &sprite, 2, 0, 4, 1, 0, 0, 8, BLIT_2BPP);
+    blit_sub_impl(&mut fb, &sprite, 2, 0, 4, 1, 0, 0, 8, BLIT_2BPP, draw_colors);
 
     assert_eq!(fb, vec![0b11110000, 0b00001111])
-}
-
-fn mk_mask(sprite_byte: u8) -> u8 {
-    let mut mask: u8 = 0b00000011;
-    let mut sprite_mask = 0u8;
-    for _ in 0..4 {
-        if sprite_byte & mask == 0 {
-            sprite_mask |= mask;
-        }
-        mask = mask << 2
-    };
-    sprite_mask
-}
-
-#[test]
-fn test_mk_mask() {
-    assert_eq!(0b00001100, mk_mask(0b10110010));
 }
 
 fn conv_1bpp_to_2bpp(pixbuf: u8) -> u32 {
@@ -252,4 +247,27 @@ fn conv_1bpp_to_2bpp(pixbuf: u8) -> u32 {
 fn test_conv_1bpp_to_2bpp() {
     assert_eq!(0b0101010101010101, conv_1bpp_to_2bpp(0b0000000011111111));
     assert_eq!(0b0101010100000000, conv_1bpp_to_2bpp(0b0000000011110000));
+}
+
+fn remap_draw_colors(sprite_word: u32, sprite_word_pixels: u32, draw_colors: u16) -> (u32, u32){
+    let mut s = 0;
+    let mut m = 0;
+    for n in 0..sprite_word_pixels {
+        let shift = 2*n;
+        let draw_color_idx = (sprite_word >> shift) & 0b11;
+        let draw_color = (draw_colors as u32 >> (draw_color_idx*4)) & 0b111;
+        if draw_color == 0 {
+            m |= 0b11 << shift;
+        } else {
+            let palette_index = draw_color - 1;
+            s |= palette_index << shift;
+        }
+    }
+
+    (s,m)
+}
+
+#[test]
+fn test_remap_draw_colors() {
+    assert_eq!((0b01001000, 0b00110000), remap_draw_colors(0b11100001, 4, 0x2013));
 }

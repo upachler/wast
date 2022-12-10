@@ -8,6 +8,7 @@ use sdl2::keyboard::Keycode;
 use sdl2::rect::Rect;
 use sdl2::render::TextureAccess;
 use sdl2::surface::Surface;
+use w4::SCREEN_SIZE;
 
 use std::{time::Duration};
 
@@ -58,6 +59,39 @@ fn read_wasm_from_url(url: &Url) -> Vec<u8> {
     wa_module
 }
 
+fn expand_fb_to_index8(fbtexdata: &mut [u8]) {
+    assert!(fbtexdata.len() %4 == 0);
+
+    for n in (0..fbtexdata.len()/4).rev() {
+        let buf = fbtexdata[n];
+        let m = 4*n+3;
+        fbtexdata[m] = buf >> 6;
+        let m = m-1;
+        fbtexdata[m] = (buf >> 4) & 0b00000011;
+        let m = m-1;
+        fbtexdata[m] = (buf >> 2) & 0b00000011;
+        let m = m-1;
+        fbtexdata[m] = buf & 0b00000011;
+    }
+}
+
+#[test]
+fn test_expand_fb_to_index8() {
+    let mut testfb = [0b11100100, 0b01100011, 0, 0, 0, 0, 0, 0];
+    expand_fb_to_index8(&mut testfb);
+
+    assert!(testfb == [
+        0b00,
+        0b01,
+        0b10,
+        0b11,
+        0b11,
+        0b00,
+        0b10,
+        0b01
+    ]);
+}
+
 fn run_gameloop<C: W4Process>(cart: &mut C) {
 
     // initialize default palette
@@ -73,21 +107,20 @@ fn run_gameloop<C: W4Process>(cart: &mut C) {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
  
-    let window = video_subsystem.window("WASM Station", 480, 480)
+    let window = video_subsystem.window("WASM Station", 3*SCREEN_SIZE, 3*SCREEN_SIZE)
         .position_centered()
         .build()
         .unwrap();
  
     let mut canvas = window.into_canvas().build().unwrap();
  
-    let mut surface = Surface::new(160, 160, PixelFormatEnum::Index8).unwrap();
+    let mut surface = Surface::new(SCREEN_SIZE, SCREEN_SIZE, PixelFormatEnum::Index8).unwrap();
     let tc = canvas.texture_creator();
 
     canvas.set_draw_color(Color::RGB(0, 255, 255));
     canvas.clear();
     canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
-    let mut i = 0;
 
     let mut raw_colors = [0xffu8;3*4];
     let mut colors = Vec::with_capacity(256);
@@ -103,17 +136,16 @@ fn run_gameloop<C: W4Process>(cart: &mut C) {
         }
         cart.read_raw_palette(&mut raw_colors);
 
-        cart.read_fb(surface.without_lock_mut().unwrap());
+        let fbdata =surface.without_lock_mut().unwrap();
+        cart.read_fb(fbdata);
+        expand_fb_to_index8(fbdata);
+
 
         let palette = Palette::with_colors(&colors).unwrap();
         surface.set_palette(&palette).unwrap();
         
-        i = (i + 1) % 255;
-        canvas.set_draw_color(Color::RGB(i, 64, 255 - i));
-        canvas.clear();
-
         let fb_tex = tc.create_texture_from_surface(&surface).unwrap();
-        canvas.copy(&fb_tex, None, Some(Rect::new(0, 0, 240, 240))).unwrap();
+        canvas.copy(&fb_tex, None, Some(Rect::new(0, 0, 3*SCREEN_SIZE, 3*SCREEN_SIZE))).unwrap();
 
         for event in event_pump.poll_iter() {
             match event {
